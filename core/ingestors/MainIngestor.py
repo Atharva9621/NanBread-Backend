@@ -14,13 +14,14 @@ Sequential or parallel per source controlled by the `parallel` flag.
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from core.ingestors.RedditIngestor  import RedditIngestor
-from core.ingestors.YouTubeIngestor import YouTubeIngestor
+from core.ingestors.YoutubeIngestor import YouTubeIngestor
 from core.ingestors.TwitterIngestor import TwitterIngestor
+from core.ingestors.GoogleSerpIngestor import GoogleSerpIngestor
 
 from core.utils.logger import Logger, Verbosity
 log = Logger(name=__name__, verbosity=Verbosity.TRACE)
 
-DEFAULT_CAPS = {"reddit": 3, "youtube": 3, "twitter": 3}
+DEFAULT_CAPS = {"reddit": 3, "youtube": 3, "google": 3, "twitter": 3}
 
 class MainIngestor:
 
@@ -28,17 +29,20 @@ class MainIngestor:
         self,
         reddit_ingestor:  RedditIngestor  = None,
         youtube_ingestor: YouTubeIngestor = None,
+        google_ingestor:  GoogleSerpIngestor = None,
         twitter_ingestor: TwitterIngestor = None,
         parallel: bool = False,
     ):
         self.rig = reddit_ingestor  or RedditIngestor()
-        self.yig = youtube_ingestor or YouTubeIngestor()
+        self.yig = youtube_ingestor or YoutubeIngestor()
+        self.gig = google_ingestor  or GoogleSerpIngestor()
         self.tig = twitter_ingestor or TwitterIngestor()
         self.parallel = parallel
 
         # internal maps populated during get_origins, consumed in get_comments
         self._permalink_map = {}   # reddit:  {idx → permalink}
         self._video_id_map  = {}   # youtube: {idx → video_id}
+        self._product_map   = {}   # google:  {idx → {...}}
         self._tweet_map     = {}   # twitter: {idx → tweet text}
 
     # ------------------------------------------------------------------
@@ -60,6 +64,7 @@ class MainIngestor:
         tasks = {
             "reddit":  (self.rig.get_origins, queries, caps.get("reddit",  3)),
             "youtube": (self.yig.get_origins, queries, caps.get("youtube", 3)),
+            "google":  (self.gig.get_origins,  queries, caps.get("google",  3)),
             "twitter": (self.tig.get_origins, queries, caps.get("twitter", 3)),
         }
 
@@ -85,11 +90,13 @@ class MainIngestor:
         """
         reddit_origins  = [o for o in origins if o["source"] == "reddit"]
         youtube_origins = [o for o in origins if o["source"] == "youtube"]
+        google_origins  = [o for o in origins if o["source"] == "google"]
         twitter_origins = [o for o in origins if o["source"] == "twitter"]
 
         tasks = {
             "reddit":  (self.rig.get_comments, reddit_origins,  self._permalink_map),
             "youtube": (self.yig.get_comments, youtube_origins, self._video_id_map),
+            "google":  (self.gig.get_comments,  google_origins,  self._product_map),
             "twitter": (self.tig.get_comments, twitter_origins, self._tweet_map),
         }
 

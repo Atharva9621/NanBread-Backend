@@ -5,11 +5,11 @@ get_origins(queries, cap) → [{"idx": "r1", "source": "reddit", "url": "..."}]
 get_comments(origins)     → [{"idx": "r1", "comments": ["...", "..."]}]
 """
 
-import logging
 import time
 import requests
 
-log = logging.getLogger(__name__)
+from core.utils.logger import Logger, Verbosity
+log = Logger(name=__name__, verbosity=Verbosity.TRACE)
 
 BASE_URL = "https://www.reddit.com"
 HEADERS  = {

@@ -9,18 +9,23 @@ from flask import Flask, Response, jsonify, request, stream_with_context
 from core.utils.logger import Logger, Verbosity
 from core.ingestors.MainIngestor import MainIngestor
 from core.chains.report_generation import get_prethinking, get_report
-from core.chains.llm import GeminiLLM
+from core.chains.llm import GeminiLLM, SuperGemini
 
 import os
+LOCAL = os.getenv("DOCKER", "false").lower() == "false"
 from dotenv import load_dotenv
 load_dotenv()
-
+PORT = int(os.getenv("PORT", 8080))
 app = Flask(__name__)
-log = Logger(name="api", verbosity=Verbosity.DEBUG)
+if LOCAL:
+    #if this isnt importing make sure u hv pip installed dev_requirements.txt
+    from flask_cors import CORS
+    CORS(app)
+log = Logger(name=__name__, verbosity=Verbosity.DEBUG)
+log.debug(f"Environment: LOCAL={LOCAL}, PORT={PORT}")
 
-llm = GeminiLLM(api_key=os.getenv("GEMINI"))
+llm = SuperGemini(init_health_check=False)
 mig = MainIngestor(parallel=False)
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -107,6 +112,7 @@ def report_stream():
             prethinking_result = get_prethinking(llm, product)
             thinking_text = prethinking_result.get("thinking", "")
             queries       = prethinking_result.get("queries", [])
+            log.debug(f"Prethinking: [blue]{thinking_text}[/]")
             log.debug(f"Got [cyan]{len(queries)}[/cyan] queries: {queries}")
 
             # matches dummy: {"queries": [...], "thinking": "..."}
@@ -124,7 +130,7 @@ def report_stream():
                 queries,
                 caps={"reddit": 2, "youtube": 2, "twitter": 2},
             )
-            log.debug(f"Got [cyan]{len(origins)}[/cyan] origins")
+            log.debug(f"Got {len(origins)} origins")
             for o in origins:
                 log.trace(f"  {o['idx']} [{o['source']}] {o['url']}")
 
@@ -173,6 +179,7 @@ def report_stream():
             # ----------------------------------------------------------------
             log.info("[bold]Stage 5[/bold] — generating report")
             report_data = get_report(llm, product, comments)
+            log.debug(f"Sample report section: [blue]{report_data.get('sections', [{}])[0].get('content', '')[:200]}[/]")
             log.info("[bold green]Report generated successfully[/bold green]")
 
             # matches dummy: full report object + url_map for reference resolution
@@ -193,5 +200,5 @@ def report_stream():
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    log.info("Starting [bold]NanBread API[/bold] on [cyan]http://localhost:5000[/cyan]")
-    app.run(debug=True, port=5000)
+    log.info(f"Starting [bold]NanBread API[/bold] on [cyan]http://localhost:{PORT}[/cyan]")
+    app.run(debug=True, port=PORT)

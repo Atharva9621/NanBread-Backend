@@ -11,14 +11,14 @@ Each source runs independently — one failure never blocks others.
 Sequential or parallel per source controlled by the `parallel` flag.
 """
 
-import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from core.ingestors.RedditIngestor  import RedditIngestor
 from core.ingestors.YouTubeIngestor import YouTubeIngestor
 from core.ingestors.TwitterIngestor import TwitterIngestor
 
-log = logging.getLogger(__name__)
+from core.utils.logger import Logger, Verbosity
+log = Logger(name=__name__, verbosity=Verbosity.TRACE)
 
 DEFAULT_CAPS = {"reddit": 3, "youtube": 3, "twitter": 3}
 

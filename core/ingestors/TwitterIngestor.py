@@ -2,15 +2,16 @@ import os
 import logging
 from typing import List, Dict, Tuple
 from apify_client import ApifyClient
+
 from dotenv import load_dotenv
-
 load_dotenv()
-log = logging.getLogger(__name__)
 
+from core.utils.logger import Logger, Verbosity
+log = Logger(name=__name__, verbosity=Verbosity.TRACE)
 
 class TwitterIngestor:
 
-    def __init__(self, use_hardcoded: bool = False):
+    def __init__(self, use_hardcoded: bool = True):
         self.use_hardcoded = use_hardcoded
         self.actor_id = "61RPP7dywgiy0JPD0"
 

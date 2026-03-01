@@ -32,6 +32,7 @@ class GeminiLLM:
 
     def __init__(self, api_key: str, model: str = DEFAULT_MODEL):
         self.model_name = model
+        self.truncate_log = True 
         try:
             import google.generativeai as genai
             genai.configure(api_key=api_key)
@@ -42,14 +43,19 @@ class GeminiLLM:
 
     def answer(self, prompt: str) -> str:
         try:
-            log.trace(f"Gemini Prompt  : [green1]{prompt}[/]")
+            log.trace(f"Gemini Prompt  : [green1]{self.prep_for_log(prompt)}[/]")
             response = self._model.generate_content(prompt)
             txt = response.text.strip()
-            log.trace(f"Gemini Response: [magenta]{txt}[/]")
+            log.trace(f"Gemini Response: [magenta]{self.prep_for_log(txt)}[/]")
             return txt
         except Exception as exc:
             log.error(f"Gemini error: {exc}")
             raise
+
+    def prep_for_log(self, text: str) -> str:
+        if self.truncate_log and len(text) > 500:
+            return text[:250] + " ... " + text[-250:]
+        return text
 
 # ---------------------------------------------------------------------------
 # SUPER Gemini
@@ -61,9 +67,11 @@ class SuperGemini:
         self,
         model: str = DEFAULT_MODEL,
         init_health_check: bool = True,
+        api_key: str = None,
     ):
         self.model_name = model
-
+        if api_key is not None:
+            log.warn("Ignoring provided api_key — SuperGemini discovers all GEMINI* keys from environment variables")
         try:
             import google.generativeai as genai
             self._genai = genai
@@ -129,6 +137,11 @@ class SuperGemini:
     # Key discovery
     # ------------------------------------------------------------------
 
+    def prep_for_log(self, text: str) -> str:
+        if self.truncate_log and len(text) > 500:
+            return text[:250] + " ... " + text[-250:]
+        return text
+    
     def _discover_keys(self) -> list[str]:
         """
         Finds all env vars matching: GEMINI, GEMINI1, GEMINI2, GEMINI_1, GEMINI_2 ...
@@ -152,11 +165,11 @@ class SuperGemini:
     # ------------------------------------------------------------------
 
     def _run_health_checks(self, keys: list[str]) -> None:
-        log.info(f"Running health checks on [cyan]{len(keys)}[/cyan] key(s)...")
+        log.debug(f"Running health checks on [cyan]{len(keys)}[/cyan] key(s)...")
         for key in keys:
             if self._is_healthy(key):
                 self._healthy.append(key)
-                log.info(f"  [...{key[-6:]}] [bold green]healthy[/bold green]")
+                log.debug(f"  [...{key[-6:]}] [bold green]healthy[/bold green]")
             else:
                 self._unhealthy.append(key)
                 log.warn(f"  [...{key[-6:]}] [bold orange3]unhealthy[/bold orange3]")

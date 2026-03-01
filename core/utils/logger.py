@@ -6,26 +6,42 @@ A Rich-backed logger with:
   - Callable interface  : log("msg"), log.info("msg"), etc.
   - Public console      : Logger.console  (class-level, shared across instances)
   - Optional file sink  : plain-text only, auto-named with run timestamp
-  - Logging is a second-class citizen — everything is wrapped in try/except:
-      1. Rich console failure  → falls back to plain-text file write
-      2. File write failure    → emits ONE plain print() across ALL instances
-                                 (guarded by module-level flag)
-      3. raise_exceptions=True → re-raises after the fallback chain
+  - Logging is a second-class citizen — everything is wrapped in try/except
+
+USE_RICH_LOGGING env var:
+  "true" / "1" / "yes"  (default) → Rich console output
+  "false" / "0" / "no"            → stdlib logging, no Rich import at all
+  Rich markup in messages is stripped to known tags only in stdlib mode.
 """
 
 from __future__ import annotations
 
-import re
 import os
+import re
+import logging as _stdlib_logging
 from datetime import datetime
 from enum import IntEnum
 
-from rich.console import Console
-from rich.theme import Theme
+from dotenv import load_dotenv
+load_dotenv()
+# ---------------------------------------------------------------------------
+# Resolve USE_RICH_LOGGING once at import time — no Rich import if disabled
+# ---------------------------------------------------------------------------
+
+_USE_RICH = os.environ.get("USERICHLOGGING", "true").strip().lower() not in (
+    "false", "0", "no"
+)
+
+if _USE_RICH:
+    from rich.console import Console
+    from rich.theme import Theme
+else:
+    Console = None
+    Theme   = None
 
 
 # ---------------------------------------------------------------------------
-# Module-level "already warned" flag  — one print across all Logger instances
+# Module-level file-error flag — one print across ALL Logger instances
 # ---------------------------------------------------------------------------
 _FILE_ERROR_REPORTED: bool = False
 
@@ -43,16 +59,69 @@ class Verbosity(IntEnum):
 
 
 # ---------------------------------------------------------------------------
-# Colour theme  (avoiding stock red / green / yellow)
+# Targeted Rich markup stripping for stdlib mode
+#
+# We only strip tags whose content matches known Rich color/style names.
+# Unknown [*] patterns are left untouched — they might be part of log content.
 # ---------------------------------------------------------------------------
 
-_THEME = Theme({
-    "lvl.error": "bold bright_magenta",
-    "lvl.warn":  "bold orange3",
-    "lvl.info":  "bold cyan",
-    "lvl.debug": "bold blue_violet",
-    "lvl.trace": "bold grey58",
-})
+_RICH_KNOWN_TAGS = {
+    # basic colours
+    "black","red","green","yellow","blue","magenta","cyan","white",
+    # bright variants
+    "bright_black","bright_red","bright_green","bright_yellow",
+    "bright_blue","bright_magenta","bright_cyan","bright_white",
+    # styles
+    "bold","dim","italic","underline","blink","reverse","strike",
+    # extended colours used in this codebase
+    "orange3","blue_violet","grey58","green1","cyan1",
+    # compound styles (order matters — longer first in regex)
+    "bold green","bold red","bold cyan","bold blue","bold magenta",
+    "bold orange3","bold bright_magenta","bold blue_violet","bold grey58",
+    "bold bright_red","bold bright_green",
+}
+
+_KNOWN_TAGS_RE = re.compile(
+    r"\[(?:/)?" +
+    "(?:" + "|".join(re.escape(t) for t in sorted(_RICH_KNOWN_TAGS, key=len, reverse=True)) + ")" +
+    r"\]",
+    re.IGNORECASE,
+)
+_BARE_CLOSE_RE  = re.compile(r"\[/\]")
+_ALL_MARKUP_RE  = re.compile(r"\[/?[^\[\]]*\]")   # used for file sink only
+
+
+def strip_rich_markup(text: str) -> str:
+    """Strip ONLY known Rich color/style tags. Leaves unknown [*] alone."""
+    text = _KNOWN_TAGS_RE.sub("", text)
+    text = _BARE_CLOSE_RE.sub("", text)
+    return text
+
+
+def _strip_all_markup(text: str) -> str:
+    """Strip all [*] patterns — safe for file sink (our own logs only)."""
+    return _ALL_MARKUP_RE.sub("", text)
+
+
+def _plain_line(label: str, name: str, msg: str) -> str:
+    ts = datetime.now().strftime("%H:%M:%S")
+    return f"[{ts}] [{label}] ({name}) {_strip_all_markup(msg)}\n"
+
+
+# ---------------------------------------------------------------------------
+# Rich theme + level map
+# ---------------------------------------------------------------------------
+
+if _USE_RICH:
+    _THEME = Theme({
+        "lvl.error": "bold bright_magenta",
+        "lvl.warn":  "bold orange3",
+        "lvl.info":  "bold cyan",
+        "lvl.debug": "bold blue_violet",
+        "lvl.trace": "bold grey58",
+    })
+else:
+    _THEME = None
 
 _LEVEL_STYLE = {
     Verbosity.ERROR: ("lvl.error", "ERROR"),
@@ -62,16 +131,13 @@ _LEVEL_STYLE = {
     Verbosity.TRACE: ("lvl.trace", "TRACE"),
 }
 
-_MARKUP_RE = re.compile(r"\[/?[^\[\]]*\]")
-
-
-def _strip_markup(text: str) -> str:
-    return _MARKUP_RE.sub("", text)
-
-
-def _plain_line(label: str, name: str, msg: str) -> str:
-    ts = datetime.now().strftime("%H:%M:%S")
-    return f"[{ts}] [{label}] ({name}) {_strip_markup(msg)}\n"
+_STDLIB_LEVEL = {
+    Verbosity.ERROR: _stdlib_logging.ERROR,
+    Verbosity.WARN:  _stdlib_logging.WARNING,
+    Verbosity.INFO:  _stdlib_logging.INFO,
+    Verbosity.DEBUG: _stdlib_logging.DEBUG,
+    Verbosity.TRACE: _stdlib_logging.DEBUG,   # stdlib has no TRACE
+}
 
 
 # ---------------------------------------------------------------------------
@@ -79,8 +145,7 @@ def _plain_line(label: str, name: str, msg: str) -> str:
 # ---------------------------------------------------------------------------
 
 class Logger:
-    # Class-level shared console — override per instance if needed
-    console: Console = Console(theme=_THEME)
+    console: Console = Console(theme=_THEME) if _USE_RICH else None
 
     def __init__(
         self,
@@ -96,14 +161,26 @@ class Logger:
         self.raise_exceptions = raise_exceptions
         self._file_handle = None
 
+        # stdlib logger — always set up, used when _USE_RICH is False
+        self._stdlib = _stdlib_logging.getLogger(name)
+        if not self._stdlib.handlers:
+            _h = _stdlib_logging.StreamHandler()
+            _h.setFormatter(_stdlib_logging.Formatter(
+                "[%(asctime)s] [%(levelname)-5s] (%(name)s)  %(message)s",
+                datefmt="%H:%M:%S",
+            ))
+            self._stdlib.addHandler(_h)
+        self._stdlib.setLevel(_STDLIB_LEVEL.get(verbosity, _stdlib_logging.DEBUG))
+        self._stdlib.propagate = False
+
         if log_to_file:
             try:
                 if log_file:
                     log_path = os.path.join(log_dir, log_file)
                 else:
                     os.makedirs(log_dir, exist_ok=True)
-                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    log_path = os.path.join(log_dir, f"{name}_{timestamp}.log")
+                    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    log_path = os.path.join(log_dir, f"{name}_{ts}.log")
                 self._file_handle = open(log_path, "w", encoding="utf-8")
             except Exception as exc:
                 self._handle_file_error(exc)
@@ -113,7 +190,6 @@ class Logger:
     # ------------------------------------------------------------------
 
     def _try_write_file(self, line: str) -> None:
-        """Write plain text to file. On failure → one-time print fallback."""
         global _FILE_ERROR_REPORTED
         try:
             if self._file_handle:
@@ -123,15 +199,11 @@ class Logger:
             self._handle_file_error(exc)
 
     def _handle_file_error(self, exc: Exception) -> None:
-        """Emit a single plain print to console for file errors, exactly once."""
         global _FILE_ERROR_REPORTED
         if not _FILE_ERROR_REPORTED:
             _FILE_ERROR_REPORTED = True
             sep = "=" * 60
-            print(sep)
-            print(f"  LOGGER FILE ERROR ({self.name}): {exc}")
-            print(f"  Further file-write failures will be silently ignored.")
-            print(sep)
+            print(f"{sep}\n  LOGGER FILE ERROR ({self.name}): {exc}\n  Further file-write failures will be silently ignored.\n{sep}")
         if self.raise_exceptions:
             raise exc
 
@@ -141,15 +213,17 @@ class Logger:
 
     def _emit(self, level: Verbosity, msg: str) -> None:
         _, label = _LEVEL_STYLE[level]
-        plain_line = _plain_line(label, self.name, msg)
+        self._try_write_file(_plain_line(label, self.name, msg))
 
-        # Always attempt file write (verbosity gate does NOT apply to file)
-        self._try_write_file(plain_line)
-
-        # Console is gated by verbosity
         if level > self.verbosity:
             return
 
+        if _USE_RICH:
+            self._emit_rich(level, label, msg)
+        else:
+            self._emit_stdlib(level, msg)
+
+    def _emit_rich(self, level: Verbosity, label: str, msg: str) -> None:
         style, _ = _LEVEL_STYLE[level]
         ts = datetime.now().strftime("%H:%M:%S")
         prefix = (
@@ -157,48 +231,34 @@ class Logger:
             f"[{style}]{label}[/{style}] "
             f"[dim]({self.name})[/dim]"
         )
-
         try:
             self.console.print(f"{prefix}  {msg}")
         except Exception as rich_exc:
-            # Rich failed — fall back to plain-text file write
-            fallback = _plain_line(f"{label}+RICH_ERR", self.name, msg)
             self._try_write_file(
-                f"[LOGGER] Rich console error: {rich_exc}\n"
-                f"{fallback}"
+                f"[LOGGER] Rich error: {rich_exc}\n"
+                f"{_plain_line(f'{label}+RICH_ERR', self.name, msg)}"
             )
             if self.raise_exceptions:
                 raise rich_exc
+
+    def _emit_stdlib(self, level: Verbosity, msg: str) -> None:
+        clean = strip_rich_markup(msg)
+        self._stdlib.log(_STDLIB_LEVEL.get(level, _stdlib_logging.DEBUG), clean)
 
     # ------------------------------------------------------------------
     # Public level methods
     # ------------------------------------------------------------------
 
-    def error(self, msg: str) -> None:
-        self._emit(Verbosity.ERROR, msg)
-
-    def warn(self, msg: str) -> None:
-        self._emit(Verbosity.WARN, msg)
-
-    def info(self, msg: str) -> None:
-        self._emit(Verbosity.INFO, msg)
-
-    def debug(self, msg: str) -> None:
-        self._emit(Verbosity.DEBUG, msg)
-
-    def trace(self, msg: str) -> None:
-        self._emit(Verbosity.TRACE, msg)
-
-    # ------------------------------------------------------------------
-    # log() + __call__
-    # ------------------------------------------------------------------
+    def error(self, msg: str) -> None: self._emit(Verbosity.ERROR, msg)
+    def warn(self,  msg: str) -> None: self._emit(Verbosity.WARN,  msg)
+    def info(self,  msg: str) -> None: self._emit(Verbosity.INFO,  msg)
+    def debug(self, msg: str) -> None: self._emit(Verbosity.DEBUG, msg)
+    def trace(self, msg: str) -> None: self._emit(Verbosity.TRACE, msg)
 
     def log(self, msg: str, level: Verbosity = Verbosity.INFO) -> None:
-        """Generic log — defaults to INFO, or pass level= to override."""
         self._emit(level, msg)
 
     def __call__(self, msg: str, level: Verbosity = Verbosity.INFO) -> None:
-        """logger('msg') is shorthand for logger.log('msg')."""
         self._emit(level, msg)
 
     # ------------------------------------------------------------------
@@ -207,6 +267,7 @@ class Logger:
 
     def set_verbosity(self, verbosity: Verbosity) -> None:
         self.verbosity = verbosity
+        self._stdlib.setLevel(_STDLIB_LEVEL.get(verbosity, _stdlib_logging.DEBUG))
 
     def close(self) -> None:
         if self._file_handle:
@@ -217,7 +278,7 @@ class Logger:
             self._file_handle = None
 
     def __repr__(self) -> str:
-        return f"<Logger name={self.name!r} verbosity={self.verbosity.name}>"
+        return f"<Logger name={self.name!r} verbosity={self.verbosity.name} rich={_USE_RICH}>"
 
 
 # ---------------------------------------------------------------------------
@@ -225,7 +286,7 @@ class Logger:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    log = Logger(name="demo", verbosity=Verbosity.TRACE, log_to_file=True)
+    log = Logger(name="demo", verbosity=Verbosity.TRACE)
 
     log("App starting up")
     log.info("Found [blue]32[/blue] residual vars → [bold]False[/bold]")
@@ -235,8 +296,10 @@ if __name__ == "__main__":
     log.error("CUDA OOM — [bold bright_red]halting run[/bold bright_red]")
 
     log.set_verbosity(Verbosity.WARN)
-    log.info("This info msg is silenced on console but still written to file")
+    log.info("Silenced on console, still written to file if enabled")
     log.warn("This warn still shows")
 
-    log.console.rule("[bold]run complete[/bold]")
+    if _USE_RICH and log.console:
+        log.console.rule("[bold]run complete[/bold]")
+
     log.close()

@@ -34,7 +34,7 @@ class MainIngestor:
         parallel: bool = False,
     ):
         self.rig = reddit_ingestor  or RedditIngestor()
-        self.yig = youtube_ingestor or YoutubeIngestor()
+        self.yig = youtube_ingestor or YouTubeIngestor()
         self.gig = google_ingestor  or GoogleSerpIngestor()
         self.tig = twitter_ingestor or TwitterIngestor()
         self.parallel = parallel

@@ -2,6 +2,7 @@
 *.egg-info
 __pycache__
 venv
+venvd
 
 *__trial__*
 tempCodeRunnerFile*

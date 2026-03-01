@@ -1,7 +1,6 @@
 import os
 import logging
 from typing import List, Dict, Tuple
-from apify_client import ApifyClient
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -14,58 +13,15 @@ class TwitterIngestor:
     def __init__(self, use_hardcoded: bool = True):
         self.use_hardcoded = use_hardcoded
         self.actor_id = "61RPP7dywgiy0JPD0"
-
-        if not self.use_hardcoded:
-            token = os.getenv("APIFY")
-            if not token:
-                raise ValueError("APIFY not found in environment")
-
-            self.client = ApifyClient(token)
-
     # ------------------------------------------------------------------
     # Public interface
     # ------------------------------------------------------------------
 
     def get_origins(self, queries: List[str], cap: int = 3):
 
-        if self.use_hardcoded:
-            return self._get_stub(cap)
+        return self._get_stub(cap)
 
-        search_query = " OR ".join(queries)
 
-        run_input = {
-            "searchTerms": [search_query],
-            "maxItems": cap,
-            "sort": "Latest",
-            "tweetLanguage": "en",
-        }
-
-        run = self.client.actor(self.actor_id).call(run_input=run_input)
-
-        dataset_id = run["defaultDatasetId"]
-
-        origins = []
-        content_map = {}
-
-        for i, item in enumerate(self.client.dataset(dataset_id).iterate_items()):
-            idx = f"t{i+1}"
-
-            url = item.get("url")
-            text = item.get("text")
-
-            if not url or not text:
-                continue
-
-            origins.append({
-                "idx": idx,
-                "source": "twitter",
-                "url": url
-            })
-
-            content_map[idx] = text
-
-        return origins, content_map
-    
     def get_comments(self, origins: List[Dict], content_map: Dict) -> List[Dict]:
         """
         Tweet text itself is the comment.

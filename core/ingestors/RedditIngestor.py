@@ -1,197 +1,164 @@
-from typing import List
-from core.ingestors._base_ingestor import base_ingestor
+"""
+RedditIngestor.py
+-----------------
+get_origins(queries, cap) → [{"idx": "r1", "source": "reddit", "url": "..."}]
+get_comments(origins)     → [{"idx": "r1", "comments": ["...", "..."]}]
+"""
 
-import requests
+import logging
 import time
+import requests
+
+log = logging.getLogger(__name__)
 
 BASE_URL = "https://www.reddit.com"
-HEADERS = {
-    "User-Agent": "Safari/5.0 (compatible; Gwalior/Vidya Prathishtha Mandir Student/1.0)"
+HEADERS  = {
+    "User-Agent": "Mozilla/5.0 (compatible; NanBread/1.0)"
 }
 
-class RedditIngestor(base_ingestor):
 
-    def __init__(self,
-                timeout:int = 10,
-                limit:int = 5,
-                ratelimit:float = 1.0
-            ):
-        super().__init__()
-        self.timeout = timeout
-        self.limit = limit
+class RedditIngestor:
+
+    def __init__(self, timeout: int = 10, ratelimit: float = 1.0):
+        self.timeout   = timeout
         self.ratelimit = ratelimit
 
-        self.msg_counter = 1
-        self.thread_counter = 1
-        self.id_to_thread = {}
+    # ------------------------------------------------------------------
+    # Public interface
+    # ------------------------------------------------------------------
 
-        self.log.debug(f"Initialized RedditIngestor")
-
-    def process(self, query: str, limit = 5) -> List[dict]:
+    def get_origins(self, queries: list[str], cap: int = 3) -> list[dict]:
         """
-        Given a product name,
-        returns list of structured reddit threads.
-        """
-        reddit_threads = self.search_threads(query, limit)
-        self.log.debug(f"Found {len(reddit_threads)} threads for query '{query}'")
-        self.log.trace(f"Sample URLs: {[t['url'] for t in reddit_threads[:3]]}")
+        Search reddit for each query, return up to cap unique thread origins.
 
-        structured_rthreads = []
-        for thread in reddit_threads:
-            thread_data = self.fetch_thread(thread["permalink"])
-            if not thread_data:
+        Returns:
+            [{"idx": "r1", "source": "reddit", "url": "https://reddit.com/r/..."}, ...]
+        """
+        seen = set()
+        origins = []
+        idx = 1
+
+        for query in queries:
+            if len(origins) >= cap:
+                break
+            try:
+                threads = self._search_threads(query, limit=cap)
+                for t in threads:
+                    if len(origins) >= cap:
+                        break
+                    if t["url"] in seen:
+                        continue
+                    seen.add(t["url"])
+                    origins.append({
+                        "idx":    f"r{idx}",
+                        "source": "reddit",
+                        "url":    t["url"],
+                        "_permalink": t["permalink"],   # internal, stripped before returning
+                    })
+                    idx += 1
+            except Exception as exc:
+                log.warning(f"RedditIngestor.get_origins failed for {query!r}: {exc}")
                 continue
 
-            parsed = self.parse_thread(thread_data, thread["url"])
-            structured_rthreads.append(parsed)
+        # strip internal keys before returning
+        return [{k: v for k, v in o.items() if not k.startswith("_")} for o in origins], \
+               {o["idx"]: o["_permalink"] for o in origins}
 
-            time.sleep(self.ratelimit)
+    def get_comments(self, origins: list[dict], permalink_map: dict) -> list[dict]:
+        """
+        Fetch flat comment list for each reddit origin.
 
-        self.log.trace(f"Sample Conversation: {structured_rthreads[0] if structured_rthreads else 'No threads parsed'}")
-        llm_text = self.format_for_llm(structured_rthreads)
+        Args:
+            origins:       list of origin dicts (idx, source, url)
+            permalink_map: {"r1": "/r/sub/comments/...", ...} from get_origins
 
-        return {
-            "threads": structured_rthreads,
-            "id_to_thread": self.id_to_thread,
-            "llm_text": llm_text
-        }
+        Returns:
+            [{"idx": "r1", "comments": ["comment text", ...]}, ...]
+        """
+        results = []
 
-    #######################################
-    # EVERYTHING ELSE WLD BE HELPER FUNCTIONS
-    #######################################
+        for origin in origins:
+            if origin["source"] != "reddit":
+                continue
+            idx       = origin["idx"]
+            permalink = permalink_map.get(idx)
+            if not permalink:
+                log.warning(f"No permalink for {idx}, skipping")
+                results.append({"idx": idx, "comments": []})
+                continue
+            try:
+                comments = self._fetch_comments(permalink)
+                results.append({"idx": idx, "comments": comments})
+                log.debug(f"  {idx} → {len(comments)} comments")
+                time.sleep(self.ratelimit)
+            except Exception as exc:
+                log.error(f"RedditIngestor.get_comments failed for {idx}: {exc}")
+                results.append({"idx": idx, "comments": []})
 
-    def search_threads(self, query:str, limit:int = 5):
-        params = {
-            "q": query,
-            "sort": "relevance",
-            "limit": limit
-        }
+        return results
 
+    # ------------------------------------------------------------------
+    # Private helpers
+    # ------------------------------------------------------------------
+
+    def _search_threads(self, query: str, limit: int = 5) -> list[dict]:
+        params = {"q": query, "sort": "relevance", "limit": limit}
         r = requests.get(
             f"{BASE_URL}/search.json",
             headers=HEADERS,
             params=params,
-            timeout=self.timeout
+            timeout=self.timeout,
         )
-
-        data = r.json()
-
+        r.raise_for_status()
         results = []
-
-        for post in data["data"]["children"]:
+        for post in r.json()["data"]["children"]:
             p = post["data"]
-
             if p["num_comments"] < 10 or p["score"] < 5:
                 continue
-
             results.append({
-                "title": p["title"],
+                "url":       BASE_URL + p["permalink"],
                 "permalink": p["permalink"],
-                "url": BASE_URL + p["permalink"]
             })
-
         return results[:limit]
 
-    def fetch_thread(self, permalink):
-        url = BASE_URL + permalink + ".json"
+    def _fetch_comments(self, permalink: str) -> list[str]:
+        url = BASE_URL + permalink.rstrip("/") + ".json?limit=100&sort=top"
+        r = requests.get(url, headers=HEADERS, timeout=self.timeout)
+        if r.status_code != 200:
+            return []
 
+        data = r.json()
+        comments = []
+
+        # OP body
         try:
-            r = requests.get(url, headers=HEADERS, timeout=self.timeout)
-            if r.status_code != 200:
-                return None
-            return r.json()
-        except:
-            return None
+            op = data[0]["data"]["children"][0]["data"]
+            body = op.get("selftext", "").strip()
+            if body and body not in ("[removed]", "[deleted]") and len(body) > 50:
+                comments.append(body)
+        except Exception:
+            pass
 
-    def parse_thread(self, thread_json, thread_url):
-        thread_id = f"T{self.thread_counter}"
-        self.thread_counter += 1
+        # top-level comments
+        try:
+            for child in data[1]["data"]["children"]:
+                if child.get("kind") != "t1":
+                    continue
+                self._extract_comment(child["data"], comments)
+        except Exception:
+            pass
 
-        post_data = thread_json[0]["data"]["children"][0]["data"]
-        comments_tree = thread_json[1]["data"]["children"]
+        return comments
 
-        messages = []
-
-        for comment in comments_tree:
-            if comment["kind"] != "t1":
-                continue
-
-            parsed_comment = self.parse_comment(
-                comment["data"],
-                thread_url
-            )
-
-            if parsed_comment:
-                messages.append(parsed_comment)
-
-        return {
-            "thread_id": thread_id,
-            "title": post_data["title"],
-            "url": thread_url,
-            "messages": messages
-        }
-
-    def parse_comment(self, comment_data, thread_url, depth=0, max_depth=2):
+    def _extract_comment(self, comment_data: dict, out: list, depth: int = 0, max_depth: int = 2):
         if depth > max_depth:
-            return None
-
-        body = comment_data.get("body", "")
+            return
+        body  = comment_data.get("body", "").strip()
         score = comment_data.get("score", 0)
-
-        if (
-            body in ["[deleted]", "[removed]"]
-            or len(body) < 50
-            or score < 3
-        ):
-            return None
-
-        msg_id = f"M{self.msg_counter}"
-        self.msg_counter += 1
-
-        self.id_to_thread[msg_id] = thread_url
-
-        message = {
-            "msg_id": msg_id,
-            "username": comment_data.get("author", "unknown"),
-            "text": body.strip(),
-            "replies": []
-        }
-
+        if body and body not in ("[removed]", "[deleted]") and len(body) >= 50 and score >= 3:
+            out.append(body)
         replies = comment_data.get("replies")
-
         if replies and isinstance(replies, dict):
-            children = replies["data"]["children"]
-
-            for child in children:
-                if child["kind"] == "t1":
-                    parsed_reply = self.parse_comment(
-                        child["data"],
-                        thread_url,
-                        depth + 1,
-                        max_depth
-                    )
-                    if parsed_reply:
-                        message["replies"].append(parsed_reply)
-
-        return message
-
-    def format_for_llm(self, threads):
-        output = []
-
-        for thread in threads:
-            output.append(f"\n=== Thread {thread['thread_id']} ===")
-            output.append(f"Title: {thread['title']}\n")
-
-            for msg in thread["messages"]:
-                self._format_msg(msg, output, indent=0)
-
-        return "\n".join(output)
-
-    def _format_msg(self, msg, output, indent):
-        space = "  " * indent
-        output.append(
-            f"{space}[{msg['msg_id']}] {msg['username']}: {msg['text']}"
-        )
-
-        for reply in msg["replies"]:
-            self._format_msg(reply, output, indent + 1)
+            for child in replies["data"]["children"]:
+                if child.get("kind") == "t1":
+                    self._extract_comment(child["data"], out, depth + 1, max_depth)

@@ -70,6 +70,8 @@ class SuperGemini:
         api_key: str = None,
     ):
         self.model_name = model
+        self.truncate_log = True 
+
         if api_key is not None:
             log.warn("Ignoring provided api_key — SuperGemini discovers all GEMINI* keys from environment variables")
         try:
@@ -110,14 +112,14 @@ class SuperGemini:
 
         key = random.choice(self._healthy)
         log.trace(f"Using key [...{key[-6:]}]")
-        log.trace(f"Prompt: [green1]{prompt}[/]")
+        log.trace(f"Prompt: [green1]{self.prep_for_log(prompt)}[/]")
 
         try:
             self._genai.configure(api_key=key)
             model   = self._genai.GenerativeModel(self.model_name)
             response = model.generate_content(prompt)
             txt = response.text.strip()
-            log.trace(f"Response: [magenta]{txt}[/]")
+            log.trace(f"Response: [magenta]{self.prep_for_log(txt)}[/]")
             return txt
 
         except Exception as exc:

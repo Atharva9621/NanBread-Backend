@@ -1,0 +1,16 @@
+venv/
+venvd/
+venv_clean/
+*__trial__*
+tempCodeRunnerFile*
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.env
+logs/
+rich_logs/
+.vscode/
+*.ipynb
+.git/
+notebooks/

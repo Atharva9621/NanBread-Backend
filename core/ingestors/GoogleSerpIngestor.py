@@ -68,7 +68,7 @@ class GoogleSerpIngestor:
                     })
                     idx += 1
             except Exception as exc:
-                log.warning(f"GoogleSerpIngestor.get_origins failed for {query!r}: {exc}")
+                log.warn(f"GoogleSerpIngestor.get_origins failed for {query!r}: {exc}")
                 continue
 
         clean_origins = [{k: v for k, v in o.items() if not k.startswith("_")} for o in origins]
@@ -94,14 +94,14 @@ class GoogleSerpIngestor:
             idx     = origin["idx"]
             product = product_map.get(idx)
             if not product:
-                log.warning(f"No product data for {idx}, skipping")
+                log.warn(f"No product data for {idx}, skipping")
                 results.append({"idx": idx, "comments": []})
                 continue
             try:
                 comments = self._extract_reviews(product["reviews"], max_reviews)
                 results.append({"idx": idx, "comments": comments})
                 log.debug(f"  {idx} → {len(comments)} reviews")
-                time.sleep(self.ratelimit)
+                time.sleep(self.ratelimit) 
             except Exception as exc:
                 log.error(f"GoogleSerpIngestor.get_comments failed for {idx}: {exc}")
                 results.append({"idx": idx, "comments": []})
@@ -119,7 +119,7 @@ class GoogleSerpIngestor:
             try:
                 resp = self.session.get(SEARCH_URL, params=params, timeout=self.timeout)
             except requests.RequestException as exc:
-                log.warning(f"network error fetching serpapi: {exc}")
+                log.warn(f"network error fetching serpapi: {exc}")
                 time.sleep(2 ** attempts)
                 continue
 

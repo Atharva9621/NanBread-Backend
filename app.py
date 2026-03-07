@@ -10,6 +10,7 @@ from core.utils.logger import Logger, Verbosity
 from core.ingestors.MainIngestor import MainIngestor
 from core.chains.report_generation import get_prethinking, get_report
 from core.chains.llm import GeminiLLM, SuperGemini
+from core.utils.report_utils import prep_references
 
 import os
 LOCAL = os.getenv("DOCKER", "false").lower() == "false"
@@ -24,7 +25,7 @@ if LOCAL:
 log = Logger(name=__name__, verbosity=Verbosity.DEBUG)
 log.debug(f"Environment: LOCAL={LOCAL}, PORT={PORT}")
 
-llm = SuperGemini(init_health_check=False)
+llm = SuperGemini(init_health_check=True) #changeit
 mig = MainIngestor(parallel=False)
 
 # ---------------------------------------------------------------------------
@@ -185,7 +186,7 @@ def report_stream():
             # matches dummy: full report object + url_map for reference resolution
             yield _sse("report", {
                 **report_data,
-                "url_map": url_map,
+                "references": prep_references(url_map),
             })
 
         except Exception as exc:
@@ -201,4 +202,9 @@ def report_stream():
 
 if __name__ == "__main__":
     log.info(f"Starting [bold]NanBread API[/bold] on [cyan]http://localhost:{PORT}[/cyan]")
-    app.run(debug=True, port=PORT)
+    if LOCAL:
+        log.debug("running on localhost")
+        app.run(debug=True, port=PORT)
+    else:
+        log.debug("running on exposed host")
+        app.run(host="0.0.0.0", port=8080)

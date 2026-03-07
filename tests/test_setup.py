@@ -1,11 +1,8 @@
 #!/usr/bin/env python
 """Test Bedrock + Gemini setup."""
-
 import os
 import sys
-
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 from core.chains.llm import BedrockWithGeminiFallback
 
 def test_setup():
@@ -22,7 +19,6 @@ def test_setup():
             aws_access_key=aws_access_key,
             aws_secret_key=aws_secret_key,
             bedrock_region=os.getenv("AWS_REGION", "us-east-1"),
-            bedrock_model=os.getenv("BEDROCK_MODEL", "amazon.titan-text-express-v1"),
         )
         
         print(f"LLM initialized. Active provider: {llm.active_provider}")

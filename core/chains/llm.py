@@ -110,22 +110,40 @@ class SuperGemini:
         if not self._healthy:
             raise RuntimeError("No healthy Gemini API keys remaining")
 
-        key = random.choice(self._healthy)
-        log.trace(f"Using key [...{key[-6:]}]")
-        log.trace(f"Prompt: [green1]{self.prep_for_log(prompt)}[/]")
+        log.trace(f"Prompt: [green1]{prompt}[/]")
 
-        try:
-            self._genai.configure(api_key=key)
-            model   = self._genai.GenerativeModel(self.model_name)
-            response = model.generate_content(prompt)
-            txt = response.text.strip()
-            log.trace(f"Response: [magenta]{self.prep_for_log(txt)}[/]")
-            return txt
+        # shuffle a snapshot so we try each healthy key once in random order
+        # without mutating self._healthy mid-loop
+        keys_to_try = random.sample(self._healthy, len(self._healthy))
+        last_exc    = None
 
-        except Exception as exc:
-            log.error(f"Key [...{key[-6:]}] failed: {exc} — marking unhealthy")
-            self._mark_unhealthy(key)
-            raise
+        for key in keys_to_try:
+            # key may have been marked unhealthy by a previous iteration
+            if key not in self._healthy:
+                continue
+
+            log.trace(f"Trying key [...{key[-6:]}]")
+            try:
+                self._genai.configure(api_key=key)
+                model    = self._genai.GenerativeModel(self.model_name)
+                response = model.generate_content(prompt)
+                txt      = response.text.strip()
+                log.trace(f"Response: [magenta]{txt}[/]")
+                return txt
+
+            except Exception as exc:
+                log.warn(
+                    f"Key [...{key[-6:]}] failed: {exc} — "
+                    f"marking unhealthy, trying next key"
+                )
+                self._mark_unhealthy(key)
+                last_exc = exc
+                continue
+
+        # all keys exhausted
+        raise RuntimeError(
+            f"All Gemini API keys exhausted. Last error: {last_exc}"
+        )
 
     @property
     def healthy_count(self) -> int:

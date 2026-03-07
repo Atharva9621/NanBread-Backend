@@ -200,48 +200,99 @@ class SuperGemini:
 # ---------------------------------------------------------------------------
 
 class BedrockLLM:
-    DEFAULT_MODEL = "amazon.titan-text-express-v1"
+    MODEL = "us.amazon.nova-lite-v1:0"
 
     def __init__(
         self,
         aws_access_key: str,
         aws_secret_key: str,
         region: str = "us-east-1",
-        model: str = DEFAULT_MODEL,
     ):
-        self.model_id = model
         try:
-            import boto3, json
-            self._json = json
+            import boto3
             self._client = boto3.client(
                 "bedrock-runtime",
                 region_name=region,
                 aws_access_key_id=aws_access_key,
                 aws_secret_access_key=aws_secret_key,
             )
+            log.info(f"Successfully initialized BedrockLLM with model '{self.MODEL}'")
         except ImportError:
             raise ImportError("pip install boto3")
 
     def answer(self, prompt: str) -> str:
         try:
-            body = self._json.dumps({
-                "inputText": prompt,
-                "textGenerationConfig": {
-                    "maxTokenCount": 2048,
-                    "temperature": 0.7,
-                }
-            })
-            response = self._client.invoke_model(
-                modelId=self.model_id,
-                body=body,
-                contentType="application/json",
-                accept="application/json",
+            response = self._client.converse(
+                modelId=self.MODEL,
+                messages=[{"role": "user", "content": [{"text": prompt}]}],
+                inferenceConfig={"maxTokens": 2048, "temperature": 0.7}
             )
-            result = self._json.loads(response["body"].read())
-            return result["results"][0]["outputText"].strip()
+            return response["output"]["message"]["content"][0]["text"].strip()
         except Exception as exc:
             log.error(f"Bedrock error: {exc}")
             raise
+
+
+class BedrockWithGeminiFallback:
+    """Primary: Bedrock. Fallback: Gemini if Bedrock fails."""
+    
+    def __init__(
+        self,
+        aws_access_key: str,
+        aws_secret_key: str,
+        bedrock_region: str = "us-east-1",
+    ):
+        self._bedrock_available = False
+        self._gemini_available = False
+        self._active_provider = None
+        
+        try:
+            self._bedrock = BedrockLLM(
+                aws_access_key=aws_access_key,
+                aws_secret_key=aws_secret_key,
+                region=bedrock_region,
+            )
+            self._bedrock_available = True
+            self._active_provider = "bedrock"
+        except Exception as exc:
+            log.warn(f"Bedrock unavailable: {exc}")
+        
+        try:
+            self._gemini = SuperGemini(init_health_check=True)
+            self._gemini_available = True
+            if not self._bedrock_available:
+                self._active_provider = "gemini"
+        except Exception as exc:
+            log.warn(f"Gemini unavailable: {exc}")
+        
+        if not self._bedrock_available and not self._gemini_available:
+            raise RuntimeError("No LLM providers available")
+    
+    def answer(self, prompt: str) -> str:
+        """Try Bedrock first, fall back to Gemini if needed."""
+        if self._bedrock_available:
+            try:
+                response = self._bedrock.answer(prompt)
+                self._active_provider = "bedrock"
+                return response
+            except Exception as exc:
+                log.warn(f"Bedrock failed, trying Gemini: {exc}")
+                self._bedrock_available = False
+        
+        if self._gemini_available:
+            try:
+                response = self._gemini.answer(prompt)
+                self._active_provider = "gemini"
+                return response
+            except Exception as exc:
+                raise RuntimeError(f"Both providers failed: {exc}")
+        
+        raise RuntimeError("No LLM providers available")
+    
+    @property
+    def active_provider(self) -> str:
+        return self._active_provider
+
 
 def get_parsed_response(llm, query):
         """Get a parsed response from the LLM using the provided parser."""
@@ -434,4 +485,3 @@ def _single_to_double_quotes(text: str) -> str:
             result.append(ch)
             i += 1
     return "".join(result)
-        

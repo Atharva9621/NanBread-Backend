@@ -9,7 +9,7 @@ from flask import Flask, Response, jsonify, request, stream_with_context
 from core.utils.logger import Logger, Verbosity
 from core.ingestors.MainIngestor import MainIngestor
 from core.chains.report_generation import get_prethinking, get_report
-from core.chains.llm import GeminiLLM, SuperGemini
+from core.chains.llm import SuperGemini, BedrockWithGeminiFallback
 from core.utils.report_utils import prep_references
 
 import os
@@ -23,9 +23,19 @@ if LOCAL:
     from flask_cors import CORS
     CORS(app)
 log = Logger(name=__name__, verbosity=Verbosity.DEBUG)
-log.debug(f"Environment: LOCAL={LOCAL}, PORT={PORT}")
 
-llm = SuperGemini(init_health_check=True) #changeit
+aws_access_key = os.getenv("AWS_ACCESS_KEY_ID")
+aws_secret_key = os.getenv("AWS_SECRET_ACCESS_KEY")
+
+if aws_access_key and aws_secret_key:
+    llm = BedrockWithGeminiFallback(
+        aws_access_key=aws_access_key,
+        aws_secret_key=aws_secret_key,
+        bedrock_region=os.getenv("AWS_REGION", "us-east-1"),
+        bedrock_model=os.getenv("BEDROCK_MODEL", "amazon.titan-text-express-v1")
+    )
+else:
+    llm = SuperGemini(init_health_check=True)
 mig = MainIngestor(parallel=False)
 
 # ---------------------------------------------------------------------------

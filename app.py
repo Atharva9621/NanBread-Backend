@@ -11,6 +11,7 @@ from core.ingestors.MainIngestor import MainIngestor
 from core.chains.report_generation import get_prethinking, get_report
 from core.chains.llm import SuperGemini, BedrockWithGeminiFallback
 from core.utils.report_utils import prep_references
+from core.utils.static_cache import StaticCache
 
 import os
 LOCAL = os.getenv("DOCKER", "false").lower() == "false"
@@ -32,11 +33,12 @@ if aws_access_key and aws_secret_key:
         aws_access_key=aws_access_key,
         aws_secret_key=aws_secret_key,
         bedrock_region=os.getenv("AWS_REGION", "us-east-1"),
-        bedrock_model=os.getenv("BEDROCK_MODEL", "amazon.titan-text-express-v1")
+        # bedrock_model=os.getenv("BEDROCK_MODEL", "amazon.titan-text-express-v1")
     )
 else:
     llm = SuperGemini(init_health_check=True)
 mig = MainIngestor(parallel=False)
+static_cache = StaticCache()
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -115,6 +117,17 @@ def report_stream():
 
     def event_generator() -> Generator[str, None, None]:
         try:
+            cached = static_cache.get_product(product)
+            if cached:
+                log.trace(f"Cache hit for [cyan]{product}[/cyan] — replaying cached response")
+                yield _sse("prethinking", cached["prethinking"])
+                yield _sse("urls",        {"urls": cached["urls"]})
+                yield _sse("comments",    {"comments": cached["comments"]})
+                yield _sse("postthinking",{"thoughts": ["Loading cached analysis...", "Replaying stored report."]})
+                yield _sse("report",      cached["report"])
+                return
+            
+            log.trace(f"Cache miss for [cyan]{product}[/cyan] — running full pipeline")
             # ----------------------------------------------------------------
             # Stage 1 — prethinking
             # LLM decides what queries to search for
@@ -200,6 +213,20 @@ def report_stream():
             })
 
         except Exception as exc:
+            try:
+                cached = static_cache.get_product(product)
+                if cached:
+                    log.trace(f"Error occurred but cache hit for [cyan]{product}[/cyan] — replaying cached response")
+                    yield _sse("prethinking", cached["prethinking"])
+                    yield _sse("urls",        {"urls": cached["urls"]})
+                    yield _sse("comments",    {"comments": cached["comments"]})
+                    yield _sse("postthinking",{"thoughts": ["Loading cached analysis...", "Replaying stored report."]})
+                    yield _sse("report",      cached["report"])
+                    return
+            except Exception as cache_exc:
+                log.error(f"Error in cache retrieval after failure for [cyan]{product}[/cyan]: {cache_exc}")
+
+            #FINAL #ERROR    
             log.error(f"Stream error: {exc}\n{traceback.format_exc()}")
             yield _sse("error", {"message": str(exc)})
 

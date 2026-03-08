@@ -1,0 +1,81 @@
+{
+  "prethinking": {
+    "thinking": "The iPhone 16 is Apple's latest flagship. I should look for reviews covering camera performance, battery life, the new A18 chip, Action Button, and how it compares to the Pro model. Reddit will have candid long-term impressions, YouTube will have detailed camera comparisons.",
+    "queries": [
+      "iPhone 16 review",
+      "iPhone 16 battery life",
+      "iPhone 16 camera quality",
+      "iPhone 16 vs 15",
+      "iPhone 16 worth buying"
+    ]
+  },
+  "urls": [
+    { "source": "reddit", "url": "https://www.reddit.com/r/apple/comments/abc123/iphone_16_6_month_review/" },
+    { "source": "reddit", "url": "https://www.reddit.com/r/iphone/comments/def456/honest_iphone_16_impressions/" },
+    { "source": "youtube", "url": "https://www.youtube.com/watch?v=aaaaaaaaa1" },
+    { "source": "youtube", "url": "https://www.youtube.com/watch?v=aaaaaaaaa2" },
+    { "source": "twitter", "url": "https://twitter.com/user/status/111111111" }
+  ],
+  "comments": [
+    { "comment": "Battery life is noticeably better than the 15. I'm getting through a full day with 20% left consistently.", "source": "reddit" },
+    { "comment": "The camera upgrade feels incremental. Good but not a reason to upgrade from 15 Pro.", "source": "reddit" },
+    { "comment": "A18 chip is blazing fast. Haven't found anything that slows it down.", "source": "youtube" },
+    { "comment": "Action Button is genuinely useful once you set it up for your workflow.", "source": "reddit" },
+    { "comment": "Coming from Android, the ecosystem lock-in is real but the polish is undeniable.", "source": "twitter" }
+  ],
+  "report": {
+    "product": "iPhone 16",
+    "summary": {
+      "verdict": "A solid incremental upgrade with meaningful battery and performance improvements, best suited for iPhone 13 or older users rather than iPhone 15 upgraders.",
+      "confidence_score": 0.82
+    },
+    "sections": [
+      {
+        "title": "Battery Life",
+        "sentiment": "positive",
+        "paragraphs": [
+          {
+            "text": "Users consistently report all-day battery life with room to spare, marking a clear step up from the iPhone 15 series.",
+            "references": ["r1", "r2"]
+          }
+        ]
+      },
+      {
+        "title": "Camera",
+        "sentiment": "mixed",
+        "paragraphs": [
+          {
+            "text": "The camera improvements are real but incremental. Most reviewers agree it is not a compelling reason to upgrade from the iPhone 15 Pro.",
+            "references": ["r1", "y1"]
+          }
+        ]
+      },
+      {
+        "title": "Performance",
+        "sentiment": "positive",
+        "paragraphs": [
+          {
+            "text": "The A18 chip delivers top-tier performance with no thermal throttling reported under normal workloads.",
+            "references": ["y1", "y2"]
+          }
+        ]
+      }
+    ],
+    "pros": [
+      { "point": "Significantly improved battery life over previous generation", "references": ["r1"] },
+      { "point": "A18 chip is the fastest in any smartphone", "references": ["y1"] },
+      { "point": "Action Button adds genuine utility", "references": ["r2"] }
+    ],
+    "cons": [
+      { "point": "Camera upgrade feels incremental for existing 15 Pro users", "references": ["r1", "y2"] },
+      { "point": "No major design changes", "references": ["r2"] }
+    ],
+    "references": {
+      "r1": { "platform": "reddit", "url": "https://www.reddit.com/r/apple/comments/abc123/iphone_16_6_month_review/", "thread_title": "Iphone 16 6 Month Review" },
+      "r2": { "platform": "reddit", "url": "https://www.reddit.com/r/iphone/comments/def456/honest_iphone_16_impressions/", "thread_title": "Honest Iphone 16 Impressions" },
+      "y1": { "platform": "youtube", "url": "https://www.youtube.com/watch?v=aaaaaaaaa1", "thread_title": "aaaaaaaaa1" },
+      "y2": { "platform": "youtube", "url": "https://www.youtube.com/watch?v=aaaaaaaaa2", "thread_title": "aaaaaaaaa2" },
+      "t1": { "platform": "twitter", "url": "https://twitter.com/user/status/111111111", "thread_title": "111111111" }
+    }
+  }
+}

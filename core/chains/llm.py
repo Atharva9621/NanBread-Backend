@@ -66,11 +66,13 @@ class SuperGemini:
     def __init__(
         self,
         model: str = DEFAULT_MODEL,
-        init_health_check: bool = True,
+        init_health_check: bool = False,
+        raise_error: bool = False,
         api_key: str = None,
     ):
         self.model_name = model
         self.truncate_log = True 
+        self.raise_error = raise_error
 
         if api_key is not None:
             log.warn("Ignoring provided api_key — SuperGemini discovers all GEMINI* keys from environment variables")
@@ -86,9 +88,11 @@ class SuperGemini:
 
         discovered = self._discover_keys()
         if not discovered:
-            raise ValueError(
-                "No Gemini API keys found. Set GEMINI, GEMINI1, GEMINI2, ... in your .env"
-            )
+            log.error("No Gemini API keys found in environment variables.")
+            if self.raise_error:
+                raise ValueError(
+                    "No Gemini API keys found. Set GEMINI, GEMINI1, GEMINI2, ... in your .env"
+                )
         log.info(f"Discovered [cyan]{len(discovered)}[/cyan] Gemini key(s)")
 
         if init_health_check:
@@ -107,43 +111,50 @@ class SuperGemini:
     # ------------------------------------------------------------------
 
     def answer(self, prompt: str) -> str:
-        if not self._healthy:
-            raise RuntimeError("No healthy Gemini API keys remaining")
+        try:
+            if not self._healthy:
+                #do another quick health check before giving up — maybe keys have rotated since init
+                log.warn("No healthy Gemini keys available at start of answer(). Running quick health check...")
+                self._run_health_checks(self._healthy + self._unhealthy)
+                if not self._healthy:
+                    raise RuntimeError("No healthy Gemini API keys remaining")
 
-        log.trace(f"Prompt: [green1]{prompt}[/]")
+            # shuffle a snapshot so we try each healthy key once in random order
+            # without mutating self._healthy mid-loop
+            keys_to_try = random.sample(self._healthy, len(self._healthy))
+            last_exc    = None
 
-        # shuffle a snapshot so we try each healthy key once in random order
-        # without mutating self._healthy mid-loop
-        keys_to_try = random.sample(self._healthy, len(self._healthy))
-        last_exc    = None
+            for key in keys_to_try:
+                # key may have been marked unhealthy by a previous iteration
+                if key not in self._healthy:
+                    continue
 
-        for key in keys_to_try:
-            # key may have been marked unhealthy by a previous iteration
-            if key not in self._healthy:
-                continue
+                log.trace(f"Trying key [...{key[-6:]}]")
+                try:
+                    self._genai.configure(api_key=key)
+                    model    = self._genai.GenerativeModel(self.model_name)
+                    response = model.generate_content(prompt)
+                    txt      = response.text.strip()
+                    log.trace(f"Gemini Response: [magenta]{txt}[/]")
+                    return txt
 
-            log.trace(f"Trying key [...{key[-6:]}]")
-            try:
-                self._genai.configure(api_key=key)
-                model    = self._genai.GenerativeModel(self.model_name)
-                response = model.generate_content(prompt)
-                txt      = response.text.strip()
-                log.trace(f"Response: [magenta]{txt}[/]")
-                return txt
+                except Exception as exc:
+                    log.warn(
+                        f"Key [...{key[-6:]}] failed: {exc} — "
+                        f"marking unhealthy, trying next key"
+                    )
+                    self._mark_unhealthy(key)
+                    last_exc = exc
+                    continue
 
-            except Exception as exc:
-                log.warn(
-                    f"Key [...{key[-6:]}] failed: {exc} — "
-                    f"marking unhealthy, trying next key"
-                )
-                self._mark_unhealthy(key)
-                last_exc = exc
-                continue
-
-        # all keys exhausted
-        raise RuntimeError(
-            f"All Gemini API keys exhausted. Last error: {last_exc}"
-        )
+            # all keys exhausted
+            raise RuntimeError(
+                f"All Gemini API keys exhausted. Last error: {last_exc}"
+            )
+        except Exception as exc:
+            log.error(f"SuperGemini error: {exc}")
+            if self.raise_error:
+                raise
 
     @property
     def healthy_count(self) -> int:
@@ -218,7 +229,7 @@ class SuperGemini:
 # ---------------------------------------------------------------------------
 
 class BedrockLLM:
-    MODEL = "us.amazon.nova-lite-v1:0"
+    MODEL = "us.amazon.nova-pro-v1:0"
 
     def __init__(
         self,
@@ -240,12 +251,15 @@ class BedrockLLM:
 
     def answer(self, prompt: str) -> str:
         try:
+            log.trace(f"Prompt: [green1]{prompt}[/]")
             response = self._client.converse(
                 modelId=self.MODEL,
                 messages=[{"role": "user", "content": [{"text": prompt}]}],
-                inferenceConfig={"maxTokens": 2048, "temperature": 0.7}
+                inferenceConfig={"maxTokens": 8000, "temperature": 0.7}
             )
-            return response["output"]["message"]["content"][0]["text"].strip()
+            txt = response["output"]["message"]["content"][0]["text"].strip()
+            log.trace(f"AWS Response: [magenta]{txt}[/]")
+            return txt
         except Exception as exc:
             log.error(f"Bedrock error: {exc}")
             raise
@@ -259,6 +273,7 @@ class BedrockWithGeminiFallback:
         aws_access_key: str,
         aws_secret_key: str,
         bedrock_region: str = "us-east-1",
+        gemini_init_health_check:bool = False,
     ):
         self._bedrock_available = False
         self._gemini_available = False
@@ -272,11 +287,12 @@ class BedrockWithGeminiFallback:
             )
             self._bedrock_available = True
             self._active_provider = "bedrock"
+            log.debug(f"BedrockLLMWithFallBack initialized with region [purple]{bedrock_region}[/]")
         except Exception as exc:
             log.warn(f"Bedrock unavailable: {exc}")
         
         try:
-            self._gemini = SuperGemini(init_health_check=True)
+            self._gemini = SuperGemini(init_health_check=gemini_init_health_check)
             self._gemini_available = True
             if not self._bedrock_available:
                 self._active_provider = "gemini"

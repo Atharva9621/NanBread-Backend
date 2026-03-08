@@ -13,7 +13,11 @@ log = Logger(name=__name__, verbosity=Verbosity.TRACE)
 
 BASE_URL = "https://www.reddit.com"
 HEADERS  = {
-    "User-Agent": "Mozilla/5.0 (compatible; NanBread/1.0)"
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Connection": "keep-alive",
 }
 
 

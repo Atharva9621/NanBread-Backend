@@ -19,10 +19,12 @@ from dotenv import load_dotenv
 load_dotenv()
 PORT = int(os.getenv("PORT", 8080))
 app = Flask(__name__)
-if LOCAL:
-    #if this isnt importing make sure u hv pip installed dev_requirements.txt
-    from flask_cors import CORS
-    CORS(app)
+# if LOCAL:
+#     #if this isnt importing make sure u hv pip installed dev_requirements.txt
+#     from flask_cors import CORS
+#     CORS(app)
+from flask_cors import CORS
+CORS(app)
 log = Logger(name=__name__, verbosity=Verbosity.DEBUG)
 
 aws_access_key = os.getenv("AWS_ACCESS_KEY_ID")
@@ -133,9 +135,19 @@ def report_stream():
             # LLM decides what queries to search for
             # ----------------------------------------------------------------
             log.info("[bold]Stage 1[/bold] — prethinking")
-            prethinking_result = get_prethinking(llm, product)
-            thinking_text = prethinking_result.get("thinking", "")
-            queries       = prethinking_result.get("queries", [])
+            try:
+                prethinking_result = get_prethinking(llm, product)
+                thinking_text = prethinking_result.get("thinking", "")
+                queries       = prethinking_result.get("queries", [])
+            except Exception as exc:
+                log.error(f"""
+===================================================================================================
+||                                   PRETHINKING FAILED FALLING BACK                             ||
+===================================================================================================                       
+""")
+                thinking_text = "Let me try to directly extract relevant discussions without specific queries, but the results may be less focused."
+                queries = [product]
+
             log.debug(f"Prethinking: [blue]{thinking_text}[/]")
             log.debug(f"Got [cyan]{len(queries)}[/cyan] queries: {queries}")
 
@@ -152,7 +164,7 @@ def report_stream():
             log.info("[bold]Stage 2[/bold] — fetching origins")
             origins, url_map = mig.get_origins(
                 queries,
-                caps={"reddit": 2, "youtube": 2, "twitter": 2},
+                caps={"reddit": 2, "youtube": 2, "twitter": 1},
             )
             log.debug(f"Got {len(origins)} origins")
             for o in origins:

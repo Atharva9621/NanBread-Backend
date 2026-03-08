@@ -332,7 +332,11 @@ def get_parsed_response(llm, query):
         """Get a parsed response from the LLM using the provided parser."""
         try:
             raw_response = llm.answer(query)
+            # log.trace(f"Raw LLM response: {raw_response}")
+            # log.trace("@"*20)
             json = parse_llm_json(raw_response)
+            # log.trace(f"Parsed JSON: {json}")
+            # log.trace("@"*20)
             return json
         except Exception as e:
             log.error(f"LLM error during generation: {e}")
@@ -358,11 +362,19 @@ Usage:
     # raises ValueError if nothing parseable found
 """
 
+import re
+import json
+
+
 def parse_llm_json(text: str) -> dict | list:
     """
     Parse JSON from an LLM response string.
     Returns a dict or list.
     Raises ValueError if no valid JSON can be extracted.
+
+    Strategy order prefers dicts over lists — all { } attempts run before [ ]
+    because LLM responses that contain both (e.g. a dict with a list field)
+    would otherwise be parsed as just the inner list.
     """
     if not text or not text.strip():
         raise ValueError("Empty response")
@@ -370,9 +382,9 @@ def parse_llm_json(text: str) -> dict | list:
     strategies = [
         _try_direct,
         _try_strip_fence,
-        _try_extract_braces,
-        _try_extract_brackets,
-        _try_clean_and_parse,
+        _try_extract_braces,        # { } before [ ]
+        _try_clean_and_parse,       # cleaning pass — also tries { } first
+        _try_extract_brackets,      # [ ] last resort
     ]
 
     last_exc = None
@@ -403,7 +415,6 @@ def _try_direct(text: str):
 
 def _try_strip_fence(text: str):
     """Strip ```json ... ``` or ``` ... ``` code fences."""
-    # greedy match between fences
     match = re.search(r"```(?:json)?\s*([\s\S]*?)```", text, re.IGNORECASE)
     if match:
         return json.loads(match.group(1).strip())
@@ -413,16 +424,20 @@ def _try_strip_fence(text: str):
 def _try_extract_braces(text: str):
     """Find the outermost { ... } block and parse it."""
     start = text.find("{")
-    end = text.rfind("}")
+    end   = text.rfind("}")
     if start != -1 and end != -1 and end > start:
         return json.loads(text[start:end + 1])
     return None
 
 
 def _try_extract_brackets(text: str):
-    """Find the outermost [ ... ] block and parse it."""
+    """
+    Find the outermost [ ... ] block and parse it.
+    Tried LAST — a dict containing a list would otherwise be parsed
+    as just the inner list, losing the outer keys.
+    """
     start = text.find("[")
-    end = text.rfind("]")
+    end   = text.rfind("]")
     if start != -1 and end != -1 and end > start:
         return json.loads(text[start:end + 1])
     return None
@@ -434,17 +449,17 @@ def _try_clean_and_parse(text: str):
       - Python literals (True/False/None)
       - Single-quoted strings
       - Trailing commas before } or ]
-    Then tries brace/bracket extraction again.
+    Tries { } extraction before [ ] on the cleaned text.
     """
     cleaned = _clean(text)
 
-    # try the whole cleaned string
+    # try the whole cleaned string first
     try:
         return json.loads(cleaned)
     except Exception:
         pass
 
-    # try extracting braces/brackets from the cleaned string
+    # { } before [ ] — same priority as the top-level strategy order
     for extractor in (_try_extract_braces, _try_extract_brackets):
         try:
             result = extractor(cleaned)
@@ -475,7 +490,6 @@ def _clean(text: str) -> str:
     text = re.sub(r",\s*(\])", r"\1", text)
 
     # single-quoted strings → double-quoted
-    # careful: only replace quotes that are acting as string delimiters
     text = _single_to_double_quotes(text)
 
     return text.strip()
@@ -485,20 +499,17 @@ def _single_to_double_quotes(text: str) -> str:
     """
     Best-effort conversion of single-quoted JSON strings to double-quoted.
     Handles escaped single quotes inside strings.
-    Not perfect for all edge cases but covers 95% of LLM output.
     """
     result = []
     i = 0
     while i < len(text):
         ch = text[i]
-        if ch == "'" :
-            # start of a single-quoted string — find its end
+        if ch == "'":
             result.append('"')
             i += 1
             while i < len(text):
                 c = text[i]
                 if c == "\\":
-                    # escaped char — pass through
                     result.append(c)
                     i += 1
                     if i < len(text):
@@ -509,7 +520,6 @@ def _single_to_double_quotes(text: str) -> str:
                     i += 1
                     break
                 elif c == '"':
-                    # escape any double quotes inside the string
                     result.append('\\"')
                     i += 1
                 else:

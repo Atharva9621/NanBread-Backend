@@ -251,6 +251,7 @@ class Logger:
 
     def error(self, msg: str) -> None: self._emit(Verbosity.ERROR, msg)
     def warn(self,  msg: str) -> None: self._emit(Verbosity.WARN,  msg)
+    def warning(self,  msg: str) -> None: self._emit(Verbosity.WARN,  msg)
     def info(self,  msg: str) -> None: self._emit(Verbosity.INFO,  msg)
     def debug(self, msg: str) -> None: self._emit(Verbosity.DEBUG, msg)
     def trace(self, msg: str) -> None: self._emit(Verbosity.TRACE, msg)

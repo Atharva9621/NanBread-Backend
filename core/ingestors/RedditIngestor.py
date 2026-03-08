@@ -106,22 +106,20 @@ class RedditIngestor:
     # ------------------------------------------------------------------
 
     def _search_threads(self, query: str, limit: int = 5) -> list[dict]:
-        params = {"q": query, "sort": "relevance", "limit": limit}
         r = requests.get(
-            f"{BASE_URL}/search.json",
+            "https://api.pullpush.io/reddit/search/submission",
+            params={"q": query, "size": limit, "sort_type": "score"},
             headers=HEADERS,
-            params=params,
             timeout=self.timeout,
         )
         r.raise_for_status()
         results = []
-        for post in r.json()["data"]["children"]:
-            p = post["data"]
-            if p["num_comments"] < 10 or p["score"] < 5:
+        for post in r.json().get("data", []):
+            if post.get("num_comments", 0) < 10 or post.get("score", 0) < 5:
                 continue
             results.append({
-                "url":       BASE_URL + p["permalink"],
-                "permalink": p["permalink"],
+                "url":       f"https://reddit.com{post['permalink']}",
+                "permalink": post["permalink"],
             })
         return results[:limit]
 
